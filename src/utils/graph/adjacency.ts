@@ -13,8 +13,12 @@ export function computeAdjacencyLists(edges: ConversationEdge[]): {
 } {
   const adjacencyList: AdjacencyList = {};
   const reverseAdjacencyList: ReverseAdjacencyList = {};
+  const orderedEdges = [...edges].sort((left, right) => {
+    if (left.createdAt !== right.createdAt) return left.createdAt - right.createdAt;
+    return left.id.localeCompare(right.id);
+  });
 
-  for (const edge of edges) {
+  for (const edge of orderedEdges) {
     // Forward: source -> target
     if (!adjacencyList[edge.source]) {
       adjacencyList[edge.source] = [];

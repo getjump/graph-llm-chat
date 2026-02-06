@@ -53,6 +53,14 @@ interface LocalToolsOptions {
   confirmToolCall?: (toolName: string, args: Record<string, unknown>) => Promise<boolean>;
 }
 
+interface IndexedAttachmentWindow {
+  content: string;
+  returnedChars: number;
+  hasMore: boolean;
+  sourceKey: string;
+  chunkCount: number;
+}
+
 function buildSnippet(text: string, maxLength = 280) {
   const normalized = text.replace(/\s+/g, ' ').trim();
   if (normalized.length <= maxLength) return normalized;
@@ -149,6 +157,73 @@ async function searchRagChunks(params: {
     lexicalScore: Number(chunk.score.toFixed(4)),
     snippet: buildSnippet(chunk.chunkText),
   }));
+}
+
+async function readIndexedAttachmentWindow(params: {
+  entry: ToolAttachmentEntry;
+  offsetChars: number;
+  maxChars: number;
+  conversationId: string;
+  projectId?: string;
+}): Promise<IndexedAttachmentWindow | null> {
+  const { entry, offsetChars, maxChars, conversationId, projectId } = params;
+  const scopeLookups: Array<{ scopeType: RagScopeType; scopeId: string }> = [];
+  if (entry.scope === 'conversation') {
+    scopeLookups.push({ scopeType: 'conversation', scopeId: conversationId });
+  } else if (entry.scope === 'project' && projectId) {
+    scopeLookups.push({ scopeType: 'project', scopeId: projectId });
+  }
+
+  for (const scope of scopeLookups) {
+    const rows = await loadRagChunksForScope(scope.scopeType, scope.scopeId);
+    const byAttachmentId = rows.filter((row) => row.attachmentId === entry.attachmentId);
+    const candidates =
+      byAttachmentId.length > 0
+        ? byAttachmentId
+        : rows.filter((row) => row.attachmentName === entry.name);
+    if (candidates.length === 0) continue;
+
+    const groupedBySource = new Map<string, { latestUpdatedAt: number; rows: typeof candidates }>();
+    for (const row of candidates) {
+      const existing = groupedBySource.get(row.sourceKey);
+      if (!existing) {
+        groupedBySource.set(row.sourceKey, { latestUpdatedAt: row.updatedAt, rows: [row] });
+        continue;
+      }
+      existing.rows.push(row);
+      if (row.updatedAt > existing.latestUpdatedAt) {
+        existing.latestUpdatedAt = row.updatedAt;
+      }
+    }
+
+    const latestSource = Array.from(groupedBySource.entries()).sort((left, right) => {
+      if (left[1].latestUpdatedAt !== right[1].latestUpdatedAt) {
+        return right[1].latestUpdatedAt - left[1].latestUpdatedAt;
+      }
+      return right[0].localeCompare(left[0]);
+    })[0];
+
+    if (!latestSource) continue;
+
+    const [sourceKey, sourceGroup] = latestSource;
+    const ordered = [...sourceGroup.rows].sort((a, b) => a.chunkIndex - b.chunkIndex);
+    const fullText = ordered.map((row) => row.chunkText).join('\n\n');
+    if (!fullText) continue;
+
+    const safeOffset = Math.max(0, Math.floor(offsetChars));
+    const safeMaxChars = Math.max(1, Math.floor(maxChars));
+    const content = fullText.slice(safeOffset, safeOffset + safeMaxChars);
+
+    return {
+      content,
+      returnedChars: content.length,
+      hasMore: safeOffset + content.length < fullText.length,
+      sourceKey,
+      chunkCount: ordered.length,
+    };
+  }
+
+  return null;
 }
 
 export function createLocalTools(options: LocalToolsOptions) {
@@ -415,58 +490,77 @@ export function createLocalTools(options: LocalToolsOptions) {
         }
 
         const entry = candidates[0];
-        if (entry.source !== 'handle' || !entry.handleId) {
-          return {
-            error: 'Attachment is not readable. Re-attach file using system file access.',
-            attachmentId: entry.attachmentId,
-            name: entry.name,
-            scope: entry.scope,
-            source: entry.source,
-          };
-        }
-
-        const file = await options.resolveAttachmentFile(entry.handleId);
-        if (!file) {
-          return {
-            error: 'Could not access attached file handle. Please re-attach the file.',
-            attachmentId: entry.attachmentId,
-            name: entry.name,
-            scope: entry.scope,
-          };
-        }
-
-        if (!isTextLikeFile(file)) {
-          return {
-            error: 'Binary files are not supported by read_attached_file.',
-            attachmentId: entry.attachmentId,
-            name: entry.name,
-            scope: entry.scope,
-            size: file.size,
-            formattedSize: formatFileSize(file.size),
-            type: file.type || 'unknown',
-          };
-        }
-
         const safeOffset = Math.max(0, offsetChars ?? 0);
         const safeMaxChars = Math.max(
           1,
           Math.min(maxChars ?? options.attachmentReaderMaxCharsPerRead, options.attachmentReaderMaxCharsPerRead)
         );
 
-        const window = await readTextWindow(file, safeOffset, safeMaxChars);
+        if (entry.source === 'handle' && entry.handleId) {
+          const file = await options.resolveAttachmentFile(entry.handleId);
+          if (file) {
+            if (!isTextLikeFile(file)) {
+              return {
+                error: 'Binary files are not supported by read_attached_file.',
+                attachmentId: entry.attachmentId,
+                name: entry.name,
+                scope: entry.scope,
+                size: file.size,
+                formattedSize: formatFileSize(file.size),
+                type: file.type || 'unknown',
+              };
+            }
+
+            const window = await readTextWindow(file, safeOffset, safeMaxChars);
+            return {
+              attachmentId: entry.attachmentId,
+              name: entry.name,
+              scope: entry.scope,
+              size: file.size,
+              formattedSize: formatFileSize(file.size),
+              type: file.type || 'unknown',
+              source: 'file-handle',
+              offsetChars: safeOffset,
+              requestedMaxChars: safeMaxChars,
+              returnedChars: window.returnedChars,
+              hasMore: window.hasMore,
+              content: window.content,
+            };
+          }
+        }
+
+        const indexedWindow = await readIndexedAttachmentWindow({
+          entry,
+          offsetChars: safeOffset,
+          maxChars: safeMaxChars,
+          conversationId: options.conversationId,
+          projectId: options.projectId,
+        });
+        if (indexedWindow) {
+          return {
+            attachmentId: entry.attachmentId,
+            name: entry.name,
+            scope: entry.scope,
+            size: entry.size,
+            formattedSize: formatFileSize(entry.size),
+            type: entry.type || 'unknown',
+            source: 'indexed-rag',
+            offsetChars: safeOffset,
+            requestedMaxChars: safeMaxChars,
+            returnedChars: indexedWindow.returnedChars,
+            hasMore: indexedWindow.hasMore,
+            content: indexedWindow.content,
+            indexedChunkCount: indexedWindow.chunkCount,
+            indexedSourceKey: indexedWindow.sourceKey,
+          };
+        }
 
         return {
+          error: 'Attachment is not readable. Re-attach file or index it via attachment processing.',
           attachmentId: entry.attachmentId,
           name: entry.name,
           scope: entry.scope,
-          size: file.size,
-          formattedSize: formatFileSize(file.size),
-          type: file.type || 'unknown',
-          offsetChars: safeOffset,
-          requestedMaxChars: safeMaxChars,
-          returnedChars: window.returnedChars,
-          hasMore: window.hasMore,
-          content: window.content,
+          source: entry.source,
         };
       },
     });

@@ -88,7 +88,9 @@ export async function loadConversation(id: ConversationId) {
   if (!conversation) return null;
 
   const nodes = await db.nodes.where('conversationId').equals(id).toArray();
-  const edges = await db.edges.where('conversationId').equals(id).toArray();
+  const edges = (await db.edges.where('conversationId').equals(id).toArray()).sort(
+    (a, b) => (a.createdAt !== b.createdAt ? a.createdAt - b.createdAt : a.id.localeCompare(b.id))
+  );
   const nodeIds = nodes.map((n) => n.id);
   const messages =
     nodeIds.length > 0

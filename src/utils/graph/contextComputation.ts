@@ -6,22 +6,22 @@ import type {
   ReverseAdjacencyList,
   ComputedContext,
 } from '../../types';
-import { topologicalSort } from './topologicalSort';
 
 /**
- * Computes the full context for a node by collecting all ancestors
- * Returns messages in correct topological order
+ * Computes the full context for a node by following the active linear thread path
+ * (root -> ... -> target).
+ * Returns messages in deterministic thread order.
  *
  * The context includes:
- * 1. All ancestor nodes (reachable via reverse edges)
- * 2. Messages from those nodes in topological order
- * 3. The current node's messages
+ * 1. Nodes on the active thread path
+ * 2. Messages from those nodes in chronological order
+ * 3. System/custom/project instructions prepended
  */
 export function computeContext(
   nodeId: NodeId,
   nodesMap: Map<NodeId, ConversationNode>,
   reverseAdjacencyList: ReverseAdjacencyList,
-  adjacencyList: AdjacencyList,
+  _adjacencyList: AdjacencyList,
   systemPrompt?: string,
   customInstructions?: {
     profile?: string;
@@ -36,7 +36,8 @@ export function computeContext(
     includeProjectInstructions?: boolean;
     includeAttachmentContext?: boolean;
     includeProjectAttachmentContext?: boolean;
-  }
+  },
+  rootNodeId?: NodeId
 ): ComputedContext {
   const excludeNodes = new Set(contextSettings?.excludedNodeIds || []);
   const includeSystemPrompt = contextSettings?.includeSystemPrompt ?? true;
@@ -46,36 +47,26 @@ export function computeContext(
   const includeProjectAttachmentContext =
     contextSettings?.includeProjectAttachmentContext ?? true;
 
-  // Step 1: Collect all ancestor nodes using BFS on reverse adjacency
-  const ancestors = new Set<NodeId>();
-  const queue = [nodeId];
+  // Step 1: Build the active linear path from root to target.
+  // This avoids context contamination from side branches in merged graphs.
+  const canonicalRootNodeId = rootNodeId || nodeId;
+  const pathNodeIds = getPathToNode(
+    nodeId,
+    canonicalRootNodeId,
+    reverseAdjacencyList,
+    nodesMap
+  );
 
-  while (queue.length > 0) {
-    const current = queue.shift()!;
-    if (ancestors.has(current)) continue;
-    ancestors.add(current);
-
-    const parents = reverseAdjacencyList[current] || [];
-    for (const parent of parents) {
-      if (!ancestors.has(parent)) {
-        queue.push(parent);
-      }
-    }
-  }
-
-  // Step 2: Topologically sort the ancestors
-  const sortedNodeIds = topologicalSort(adjacencyList, Array.from(ancestors));
-
-  // Step 3: Get nodes in sorted order
+  // Step 2: Get nodes in path order
   const contextNodes: ConversationNode[] = [];
-  for (const id of sortedNodeIds) {
+  for (const id of pathNodeIds) {
     const node = nodesMap.get(id);
     if (node) {
       contextNodes.push(node);
     }
   }
 
-  // Step 4: Flatten messages in order
+  // Step 3: Flatten messages in order
   const messages: Message[] = [];
 
   // Add custom instructions first if provided
@@ -163,7 +154,7 @@ export function computeContext(
     messages.push(...visibleMessages);
   }
 
-  // Step 5: Estimate token count
+  // Step 4: Estimate token count
   const tokenEstimate = estimateTokens(messages);
 
   return {
@@ -238,19 +229,50 @@ export function getAncestors(
 export function getPathToNode(
   nodeId: NodeId,
   rootNodeId: NodeId,
-  reverseAdjacencyList: ReverseAdjacencyList
+  reverseAdjacencyList: ReverseAdjacencyList,
+  nodesMap?: Map<NodeId, ConversationNode>
 ): NodeId[] {
   const path: NodeId[] = [];
+  const visited = new Set<NodeId>();
   let current: NodeId | null = nodeId;
 
   while (current) {
+    if (visited.has(current)) break;
+    visited.add(current);
     path.unshift(current);
     if (current === rootNodeId) break;
 
-    const parentList: NodeId[] = reverseAdjacencyList[current] || [];
-    // Take the first parent (in case of multiple, we pick one path)
-    current = parentList.length > 0 ? parentList[0] : null;
+    current = selectPrimaryParent(current, reverseAdjacencyList, nodesMap);
   }
 
   return path;
+}
+
+function selectPrimaryParent(
+  nodeId: NodeId,
+  reverseAdjacencyList: ReverseAdjacencyList,
+  nodesMap?: Map<NodeId, ConversationNode>
+): NodeId | null {
+  const parentList: NodeId[] = reverseAdjacencyList[nodeId] || [];
+  if (parentList.length === 0) return null;
+
+  const explicitParentId = nodesMap?.get(nodeId)?.parentNodeId;
+  if (
+    explicitParentId &&
+    parentList.includes(explicitParentId) &&
+    (!nodesMap || nodesMap.has(explicitParentId))
+  ) {
+    return explicitParentId;
+  }
+
+  const rankedParents = [...parentList].sort((left, right) => {
+    const leftNode = nodesMap?.get(left);
+    const rightNode = nodesMap?.get(right);
+    const leftCreatedAt = leftNode?.createdAt ?? 0;
+    const rightCreatedAt = rightNode?.createdAt ?? 0;
+    if (leftCreatedAt !== rightCreatedAt) return leftCreatedAt - rightCreatedAt;
+    return left.localeCompare(right);
+  });
+
+  return rankedParents[0] || null;
 }

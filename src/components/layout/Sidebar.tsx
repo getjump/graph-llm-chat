@@ -307,6 +307,7 @@ export function Sidebar({ onOpenSettings, onOpenProjectSettings }: SidebarProps)
                   onContextMenu={(event) => handleOpenContextMenu(event, conv.id)}
                   data-testid="conversation-item"
                   data-conversation-id={conv.id}
+                  data-active={activeConversationId === conv.id ? 'true' : 'false'}
                   className={`w-full px-3 py-2 text-left rounded-lg transition-colors group flex items-center justify-between ${
                     activeConversationId === conv.id
                       ? 'bg-blue-100 text-blue-800 dark:bg-blue-500/20 dark:text-blue-200'

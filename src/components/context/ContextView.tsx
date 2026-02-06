@@ -125,7 +125,8 @@ export function ContextView() {
       {
         ...contextSettings,
         excludedNodeIds: [],
-      }
+      },
+      activeConversation.rootNodeId
     );
   }, [
     leafNodeId,

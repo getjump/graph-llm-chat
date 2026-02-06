@@ -11,6 +11,9 @@ import {
   estimateContextExtraTokens,
   estimateTokensFromText,
 } from '../../utils/tokenBudget';
+import type { LLMModel } from '../../types';
+
+const DEFAULT_MAX_TOKENS = 1024;
 
 export function ChatView() {
   const {
@@ -95,6 +98,9 @@ export function ChatView() {
   const activeDraft = leafNodeId ? chatDrafts[leafNodeId] : undefined;
   const contextInfo = leafNodeId ? getComputedContext(leafNodeId) : null;
   const contextBaseTokens = contextInfo?.tokenEstimate ?? 0;
+  const activeConversation = activeNode
+    ? conversations.get(activeNode.conversationId)
+    : null;
   const resolvedModelId = (() => {
     if (!leafNodeId) return selectedModel;
     const node = nodes.get(leafNodeId);
@@ -122,6 +128,13 @@ export function ChatView() {
   const projectedTokens = contextTokens + draftTokens + attachmentTokens;
   const projectedRatio =
     contextLimit > 0 ? Math.min(1, projectedTokens / contextLimit) : 0;
+  const completionTokenEstimate = activeConversation?.maxTokens ?? DEFAULT_MAX_TOKENS;
+  const currentCost = estimateCostUsd(contextTokens, completionTokenEstimate, resolvedModelInfo);
+  const projectedCost = estimateCostUsd(
+    projectedTokens,
+    completionTokenEstimate,
+    resolvedModelInfo
+  );
 
   const handleDraftChange = useCallback(
     (nextDraft: string) => {
@@ -546,6 +559,10 @@ export function ChatView() {
           <div className="mt-1 text-[11px] text-gray-500 dark:text-gray-400">
             Base {contextBaseTokens.toLocaleString()} + tools {extras.tools.total.toLocaleString()} + memory {extras.memory.total.toLocaleString()}
           </div>
+          <div className="mt-1 text-[11px] text-gray-500 dark:text-gray-400">
+            Est. cost now ≈ {formatUsd(currentCost.total)} (in {formatUsd(currentCost.input)} + out{' '}
+            {formatUsd(currentCost.output)})
+          </div>
           {(draftText.trim() || draftAttachments.length > 0) && (
             <div className="mt-2 flex items-center gap-3 text-[11px] text-gray-500 dark:text-gray-400">
               <div className="flex-1 h-1.5 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
@@ -563,6 +580,12 @@ export function ChatView() {
               <div className="tabular-nums whitespace-nowrap">
                 After send ≈ {projectedTokens.toLocaleString()} tokens
               </div>
+            </div>
+          )}
+          {(draftText.trim() || draftAttachments.length > 0) && (
+            <div className="mt-1 text-[11px] text-gray-500 dark:text-gray-400">
+              Est. after send ≈ {formatUsd(projectedCost.total)} (in{' '}
+              {formatUsd(projectedCost.input)} + out {formatUsd(projectedCost.output)})
             </div>
           )}
           {resolvedModelInfo && (
@@ -603,4 +626,23 @@ export function ChatView() {
       )}
     </div>
   );
+}
+
+function estimateCostUsd(
+  inputTokens: number,
+  outputTokens: number,
+  model: LLMModel | null
+) {
+  const promptRate = Number(model?.pricing?.prompt ?? 0);
+  const completionRate = Number(model?.pricing?.completion ?? 0);
+  const input = Number.isFinite(promptRate) ? inputTokens * promptRate : 0;
+  const output = Number.isFinite(completionRate) ? outputTokens * completionRate : 0;
+  return { input, output, total: input + output };
+}
+
+function formatUsd(value: number) {
+  if (!Number.isFinite(value) || value <= 0) return '—';
+  if (value >= 1) return `$${value.toFixed(2)}`;
+  if (value >= 0.01) return `$${value.toFixed(3)}`;
+  return `$${value.toFixed(5)}`;
 }

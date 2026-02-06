@@ -528,6 +528,9 @@ export const useStore = create<GraphChatState>()(
       projectId?: ProjectId | null
     ) => {
       const state = get();
+      if (state.activeConversationId) {
+        await state.persistConversation(state.activeConversationId);
+      }
       const conversationId = uuidv4();
       const rootNodeId = uuidv4();
       const now = Date.now();
@@ -778,6 +781,9 @@ export const useStore = create<GraphChatState>()(
       }
 
       const state = get();
+      if (state.activeConversationId && state.activeConversationId !== id) {
+        await state.persistConversation(state.activeConversationId);
+      }
       set({ isLoading: true });
       localStorage.setItem(LAST_CONVERSATION_KEY, id);
 
@@ -861,6 +867,7 @@ export const useStore = create<GraphChatState>()(
         updatedAt: now,
         isCollapsed: false,
         branchedFromMessageId,
+        parentNodeId,
         model: state.selectedModel,
       };
 
@@ -1287,7 +1294,8 @@ export const useStore = create<GraphChatState>()(
           projectProfile: project?.customProfile,
           projectResponseStyle: project?.customResponseStyle,
         },
-        conversation?.contextSettings
+        conversation?.contextSettings,
+        conversation?.rootNodeId
       );
     },
 
@@ -1318,7 +1326,8 @@ export const useStore = create<GraphChatState>()(
       const path = getPathToNode(
         target,
         conversation.rootNodeId,
-        state.reverseAdjacencyList
+        state.reverseAdjacencyList,
+        state.nodes
       );
 
       return path.filter((id) => {
@@ -1535,6 +1544,7 @@ export const useStore = create<GraphChatState>()(
       }
 
       const newEdges = new Map(state.edges);
+      const newNodes = new Map(state.nodes);
       for (const [edgeId, edge] of newEdges) {
         if (edge.conversationId !== conversationId) continue;
         if (edge.source === flowRootNodeId && flowNodeIds.includes(edge.target)) {
@@ -1563,10 +1573,18 @@ export const useStore = create<GraphChatState>()(
           adjacencyList = updated.adjacencyList;
           reverseAdjacencyList = updated.reverseAdjacencyList;
         }
+        const currentNode = newNodes.get(node.id);
+        if (currentNode && currentNode.parentNodeId !== previousId) {
+          newNodes.set(node.id, {
+            ...currentNode,
+            parentNodeId: previousId,
+            updatedAt: Date.now(),
+          });
+        }
         previousId = node.id;
       }
 
-      set({ edges: newEdges, adjacencyList, reverseAdjacencyList });
+      set({ nodes: newNodes, edges: newEdges, adjacencyList, reverseAdjacencyList });
       state.updateConversation(conversationId, {
         flowNodeIds: [],
         flowRootNodeId: undefined,

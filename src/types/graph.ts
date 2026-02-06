@@ -61,7 +61,7 @@ export interface ConversationNode {
   label?: string;
   branchedFromMessageId?: MessageId;
   isReply?: boolean; // True if this node is a reply/comment thread
-  parentNodeId?: NodeId; // Parent node for replies
+  parentNodeId?: NodeId; // Canonical parent in the active thread path
   model?: string;
   contextSummary?: {
     content: string;

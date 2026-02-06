@@ -1,6 +1,7 @@
-import { describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import { createLocalTools } from './localTools';
 import type { AttachmentSource } from '../types';
+import * as db from '../db';
 
 interface ToolAttachmentEntry {
   attachmentId: string;
@@ -40,6 +41,8 @@ function getToolExecute<TInput extends object, TOutput>(tool: unknown) {
 function createTools(params?: {
   attachments?: ToolAttachmentEntry[];
   filesByHandleId?: Record<string, File>;
+  projectId?: string;
+  attachmentReaderMaxCharsPerRead?: number;
 }) {
   const filesByHandleId = params?.filesByHandleId ?? {};
   return createLocalTools({
@@ -52,7 +55,7 @@ function createTools(params?: {
     maxMessageResults: 6,
     maxContextChunkResults: 6,
     enableAttachmentReader: true,
-    attachmentReaderMaxCharsPerRead: 12,
+    attachmentReaderMaxCharsPerRead: params?.attachmentReaderMaxCharsPerRead ?? 12,
     attachments: params?.attachments ?? [],
     resolveAttachmentFile: async (handleId: string) => filesByHandleId[handleId] ?? null,
     enableDaytona: false,
@@ -66,13 +69,19 @@ function createTools(params?: {
       maxStderrChars: 3000,
     },
     conversationId: 'conversation-1',
+    projectId: params?.projectId,
   });
 }
 
 describe('local attachment tools', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   test('lists attached files with dedupe by file handle', async () => {
     const now = Date.now();
     const tools = createTools({
+      attachmentReaderMaxCharsPerRead: 50000,
       attachments: [
         {
           attachmentId: 'a1',
@@ -110,6 +119,7 @@ describe('local attachment tools', () => {
   test('reads text attachment in bounded window', async () => {
     const file = new File(['abcdefghijklmno'], 'notes.txt', { type: 'text/plain' });
     const tools = createTools({
+      attachmentReaderMaxCharsPerRead: 50000,
       attachments: [
         {
           attachmentId: 'a1',
@@ -142,6 +152,7 @@ describe('local attachment tools', () => {
 
   test('asks for attachment id when file name is ambiguous', async () => {
     const tools = createTools({
+      attachmentReaderMaxCharsPerRead: 50000,
       attachments: [
         {
           attachmentId: 'a1',
@@ -205,5 +216,66 @@ describe('local attachment tools', () => {
     });
 
     expect(result.error).toContain('Binary files are not supported');
+  });
+
+  test('reads memory attachment from indexed chunks when file handle is unavailable', async () => {
+    vi.spyOn(db, 'loadRagChunksForScope').mockImplementation(async (scopeType, scopeId) => {
+      if (scopeType !== 'conversation' || scopeId !== 'conversation-1') return [];
+      return [
+        {
+          id: 'chunk-1',
+          scopeType: 'conversation',
+          scopeId: 'conversation-1',
+          sourceKey: 'source-new',
+          attachmentId: 'a1',
+          attachmentName: 'trip.ics',
+          chunkIndex: 0,
+          chunkText: 'BEGIN:VCALENDAR\nDTSTART:20260101T090000',
+          chunkTokenEstimate: 10,
+          createdAt: 1,
+          updatedAt: 2,
+        },
+        {
+          id: 'chunk-2',
+          scopeType: 'conversation',
+          scopeId: 'conversation-1',
+          sourceKey: 'source-new',
+          attachmentId: 'a1',
+          attachmentName: 'trip.ics',
+          chunkIndex: 1,
+          chunkText: 'SUMMARY:Breakfast\nEND:VCALENDAR',
+          chunkTokenEstimate: 10,
+          createdAt: 1,
+          updatedAt: 2,
+        },
+      ];
+    });
+
+    const tools = createTools({
+      attachmentReaderMaxCharsPerRead: 50000,
+      attachments: [
+        {
+          attachmentId: 'a1',
+          name: 'trip.ics',
+          size: 200,
+          type: 'text/calendar',
+          lastModified: Date.now(),
+          source: 'memory',
+          scope: 'conversation',
+        },
+      ],
+    });
+
+    const execute = getToolExecute<
+      { attachmentId: string; maxChars?: number },
+      ReadAttachedFileResult
+    >(
+      tools.read_attached_file
+    );
+    const result = await execute({ attachmentId: 'a1', maxChars: 50000 });
+
+    expect(result.error).toBeUndefined();
+    expect(result.content).toContain('BEGIN:VCALENDAR');
+    expect(result.content).toContain('SUMMARY:Breakfast');
   });
 });

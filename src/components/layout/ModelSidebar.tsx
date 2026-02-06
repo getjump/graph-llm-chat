@@ -150,13 +150,16 @@ export function ModelSidebar() {
               <button
                 type="button"
                 onClick={() => handleToggleFlowMode(!flowModeEnabled)}
+                data-testid="flow-mode-toggle"
                 className={`w-full flex items-center justify-between px-3 py-2 rounded-lg border text-sm transition-colors ${
                   flowModeEnabled
                     ? 'border-emerald-400 text-emerald-600 bg-emerald-50 dark:bg-emerald-500/10'
                     : 'border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300'
                 }`}
               >
-                <span>{flowModeEnabled ? 'Enabled' : 'Disabled'}</span>
+                <span data-testid="flow-mode-state">
+                  {flowModeEnabled ? 'Enabled' : 'Disabled'}
+                </span>
                 <span className="text-xs text-gray-400 dark:text-gray-500">
                   Auto-branch messages
                 </span>
