@@ -13,6 +13,30 @@ interface ToolAttachmentEntry {
   scope: 'conversation' | 'project';
 }
 
+interface ListAttachedFilesResult {
+  count: number;
+  files: Array<{
+    attachmentId: string;
+    readable: boolean;
+  }>;
+}
+
+interface ReadAttachedFileResult {
+  content?: string;
+  returnedChars?: number;
+  hasMore?: boolean;
+  error?: string;
+  matches?: Array<{ attachmentId: string }>;
+}
+
+function getToolExecute<TInput extends object, TOutput>(tool: unknown) {
+  const candidate = tool as { execute?: unknown };
+  if (typeof candidate.execute !== 'function') {
+    throw new Error('Tool execute function is unavailable in test.');
+  }
+  return candidate.execute as (input: TInput) => Promise<TOutput>;
+}
+
 function createTools(params?: {
   attachments?: ToolAttachmentEntry[];
   filesByHandleId?: Record<string, File>;
@@ -73,7 +97,10 @@ describe('local attachment tools', () => {
       ],
     });
 
-    const result = await (tools.list_attached_files as any).execute({ scope: 'auto' });
+    const execute = getToolExecute<{ scope: 'auto' }, ListAttachedFilesResult>(
+      tools.list_attached_files
+    );
+    const result = await execute({ scope: 'auto' });
 
     expect(result.count).toBe(1);
     expect(result.files[0].attachmentId).toBe('a1');
@@ -98,7 +125,11 @@ describe('local attachment tools', () => {
       filesByHandleId: { h1: file },
     });
 
-    const result = await (tools.read_attached_file as any).execute({
+    const execute = getToolExecute<
+      { attachmentId: string; offsetChars: number; maxChars: number },
+      ReadAttachedFileResult
+    >(tools.read_attached_file);
+    const result = await execute({
       attachmentId: 'a1',
       offsetChars: 2,
       maxChars: 5,
@@ -135,7 +166,10 @@ describe('local attachment tools', () => {
       ],
     });
 
-    const result = await (tools.read_attached_file as any).execute({
+    const execute = getToolExecute<{ fileName: string }, ReadAttachedFileResult>(
+      tools.read_attached_file
+    );
+    const result = await execute({
       fileName: 'duplicate.md',
     });
 
@@ -163,7 +197,10 @@ describe('local attachment tools', () => {
       filesByHandleId: { h1: binary },
     });
 
-    const result = await (tools.read_attached_file as any).execute({
+    const execute = getToolExecute<{ attachmentId: string }, ReadAttachedFileResult>(
+      tools.read_attached_file
+    );
+    const result = await execute({
       attachmentId: 'a1',
     });
 
