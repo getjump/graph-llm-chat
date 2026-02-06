@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__Desktop_Commander__list_directory",
+      "mcp__Desktop_Commander__read_file",
+      "Bash(npm run build:*)",
+      "Bash(npm install @headlessui/react)"
+    ]
+  }
+}

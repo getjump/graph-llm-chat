@@ -1,0 +1,109 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+#root {
+  width: 100%;
+  height: 100vh;
+}
+
+@layer base {
+  body {
+    @apply bg-white text-gray-900;
+  }
+
+  .dark body {
+    @apply bg-gray-950 text-gray-100;
+  }
+}
+
+
+.prose table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.prose th,
+.prose td {
+  border: 1px solid #e5e7eb;
+  padding: 0.5rem;
+  vertical-align: top;
+}
+
+.prose thead th {
+  background-color: #f9fafb;
+  font-weight: 600;
+}
+
+.dark .prose th,
+.dark .prose td {
+  border-color: #374151;
+}
+
+.dark .prose thead th {
+  background-color: #1f2937;
+}
+
+.prose blockquote {
+  border-left: 3px solid #e5e7eb;
+  padding-left: 0.75rem;
+  color: #4b5563;
+}
+
+.dark .prose blockquote {
+  border-left-color: #374151;
+  color: #9ca3af;
+}
+
+.prose pre {
+  background: transparent;
+  padding: 0;
+}
+
+.prose pre code {
+  background: transparent;
+  padding: 0;
+}
+
+.prose pre code::before,
+.prose pre code::after {
+  content: none;
+}
+
+
+
+.react-flow__controls button {
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  color: #1f2937;
+}
+
+.dark .react-flow__controls button {
+  background: #111827;
+  border-color: #374151;
+  color: #e5e7eb;
+}
+
+.react-flow__minimap {
+  background: #f8fafc;
+}
+
+.dark .react-flow__minimap {
+  background: #0f172a;
+}
